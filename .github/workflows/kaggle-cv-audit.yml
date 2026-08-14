@@ -42,8 +42,8 @@ jobs:
       - name: Build and compile private Kaggle audit kernel
         run: |
           rm -rf .kaggle_cv_audit_kernel
-          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/evaluate_oof_graphs.py
-          python scripts/build_cv_audit_kernel_v5.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/evaluate_oof_graphs.py
+          python scripts/build_cv_audit_kernel_v6.py
           python -m py_compile .kaggle_cv_audit_kernel/run_audit.py
           cat .kaggle_cv_audit_kernel/kernel-metadata.json
 
@@ -95,7 +95,7 @@ jobs:
             tail -n 250 "$log_file"
           fi
 
-          for diagnostic in dependency_probe last_pip import_failures dependency_after fatal_error; do
+          for diagnostic in train_layout progress dependency_probe last_pip import_failures dependency_after graph_failures fatal_error; do
             file="kaggle-audit-output/biohub_cv_audit/${diagnostic}.json"
             if [ -f "$file" ]; then
               echo "=== ${diagnostic}.json ==="
@@ -108,10 +108,14 @@ jobs:
             exit 1
           fi
 
+          echo "=== dataset_manifest.csv ==="
+          cat kaggle-audit-output/biohub_cv_audit/dataset_manifest.csv
           echo "=== summary.json ==="
           cat kaggle-audit-output/biohub_cv_audit/summary.json
           echo "=== official_metric_selftest.json ==="
           cat kaggle-audit-output/biohub_cv_audit/official_metric_selftest.json
+          echo "=== folds_balanced_5.json ==="
+          cat kaggle-audit-output/biohub_cv_audit/folds_balanced_5.json
 
       - name: Upload CV audit artifact
         if: always()
