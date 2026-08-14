@@ -42,8 +42,8 @@ jobs:
       - name: Build and compile private Kaggle audit kernel
         run: |
           rm -rf .kaggle_cv_audit_kernel
-          python -m py_compile scripts/build_cv_audit_kernel.py scripts/evaluate_oof_graphs.py
-          python scripts/build_cv_audit_kernel.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/evaluate_oof_graphs.py
+          python scripts/build_cv_audit_kernel_v3.py
           python -m py_compile .kaggle_cv_audit_kernel/run_audit.py
           cat .kaggle_cv_audit_kernel/kernel-metadata.json
 
@@ -89,15 +89,19 @@ jobs:
           kaggle kernels output "$KERNEL_REF" -p kaggle-audit-output -o || true
           find kaggle-audit-output -maxdepth 5 -type f -print || true
 
-          if [ -f kaggle-audit-output/biohub_cv_audit/fatal_error.json ]; then
-            echo "=== Kaggle fatal_error.json ==="
-            cat kaggle-audit-output/biohub_cv_audit/fatal_error.json
+          log_file="$(find kaggle-audit-output -maxdepth 2 -name '*.log' -type f | head -1 || true)"
+          if [ -n "$log_file" ]; then
+            echo "=== Kaggle kernel log tail ==="
+            tail -n 250 "$log_file"
           fi
 
-          if [ -f kaggle-audit-output/biohub_cv_audit/dependency_probe.json ]; then
-            echo "=== dependency_probe.json ==="
-            cat kaggle-audit-output/biohub_cv_audit/dependency_probe.json
-          fi
+          for diagnostic in dependency_probe last_pip import_failures dependency_after fatal_error; do
+            file="kaggle-audit-output/biohub_cv_audit/${diagnostic}.json"
+            if [ -f "$file" ]; then
+              echo "=== ${diagnostic}.json ==="
+              cat "$file"
+            fi
+          done
 
           if [ ! -f kaggle-audit-output/biohub_cv_audit/summary.json ]; then
             echo "Audit did not produce summary.json (terminal=$KAGGLE_TERMINAL)"
@@ -114,6 +118,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: biohub-cv-audit-${{ github.run_id }}
-          path: kaggle-audit-output/biohub_cv_audit/
+          path: kaggle-audit-output/
           if-no-files-found: warn
           retention-days: 30
