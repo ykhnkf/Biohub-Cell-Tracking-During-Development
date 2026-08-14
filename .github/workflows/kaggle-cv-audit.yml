@@ -1,0 +1,87 @@
+name: Biohub Kaggle CV Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: biohub-kaggle-cv-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KERNEL_REF: ykhnkf/biohub-cell-tracking-cv-audit
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Kaggle CLI
+        run: |
+          python -m pip install --upgrade pip
+          pip install "kaggle>=2.2.4"
+          kaggle --version
+
+      - name: Verify Kaggle auth and competition access
+        run: |
+          test -n "$KAGGLE_API_TOKEN" || (echo "KAGGLE_API_TOKEN repository secret is missing" && exit 1)
+          kaggle competitions files biohub-cell-tracking-during-development >/dev/null
+
+      - name: Build private Kaggle audit kernel
+        run: |
+          rm -rf .kaggle_cv_audit_kernel
+          python scripts/build_cv_audit_kernel.py
+          python -m py_compile .kaggle_cv_audit_kernel/run_audit.py
+          cat .kaggle_cv_audit_kernel/kernel-metadata.json
+
+      - name: Push audit kernel to Kaggle
+        run: kaggle kernels push -p .kaggle_cv_audit_kernel -t 180
+
+      - name: Wait for Kaggle audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 180); do
+            echo "Poll $i"
+            status="$(kaggle kernels status "$KERNEL_REF" 2>&1 || true)"
+            echo "$status"
+            if echo "$status" | grep -Eqi 'complete|success'; then
+              exit 0
+            fi
+            if echo "$status" | grep -Eqi 'error|fail|cancel'; then
+              exit 1
+            fi
+            sleep 20
+          done
+          echo "Timed out waiting for Kaggle audit"
+          exit 1
+
+      - name: Download audit outputs
+        run: |
+          rm -rf kaggle-audit-output
+          mkdir -p kaggle-audit-output
+          kaggle kernels output "$KERNEL_REF" -p kaggle-audit-output -o
+          find kaggle-audit-output -maxdepth 4 -type f -print
+          test -f kaggle-audit-output/biohub_cv_audit/summary.json
+          cat kaggle-audit-output/biohub_cv_audit/summary.json
+          cat kaggle-audit-output/biohub_cv_audit/official_metric_selftest.json
+
+      - name: Upload CV audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: biohub-cv-audit-${{ github.run_id }}
+          path: kaggle-audit-output/biohub_cv_audit/
+          if-no-files-found: error
+          retention-days: 30
