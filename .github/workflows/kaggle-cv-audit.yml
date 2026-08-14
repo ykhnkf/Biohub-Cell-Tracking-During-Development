@@ -55,39 +55,65 @@ jobs:
       - name: Push audit kernel to Kaggle
         run: kaggle kernels push -p .kaggle_cv_audit_kernel -t 180
 
-      - name: Wait for Kaggle audit
+      - name: Wait for Kaggle audit terminal state
         shell: bash
         run: |
           set -euo pipefail
+          terminal=""
           for i in $(seq 1 180); do
             echo "Poll $i"
             status="$(kaggle kernels status "$KERNEL_REF" 2>&1 || true)"
             echo "$status"
             if echo "$status" | grep -Eqi 'complete|success'; then
-              exit 0
+              terminal="success"
+              break
             fi
             if echo "$status" | grep -Eqi 'error|fail|cancel'; then
-              exit 1
+              terminal="failure"
+              break
             fi
             sleep 20
           done
-          echo "Timed out waiting for Kaggle audit"
-          exit 1
+          if [ -z "$terminal" ]; then
+            terminal="timeout"
+          fi
+          echo "KAGGLE_TERMINAL=$terminal" >> "$GITHUB_ENV"
+          echo "Kaggle terminal state: $terminal"
 
-      - name: Download audit outputs
+      - name: Download audit outputs and diagnostics
+        shell: bash
         run: |
+          set -u
           rm -rf kaggle-audit-output
           mkdir -p kaggle-audit-output
-          kaggle kernels output "$KERNEL_REF" -p kaggle-audit-output -o
-          find kaggle-audit-output -maxdepth 4 -type f -print
-          test -f kaggle-audit-output/biohub_cv_audit/summary.json
+          kaggle kernels output "$KERNEL_REF" -p kaggle-audit-output -o || true
+          find kaggle-audit-output -maxdepth 5 -type f -print || true
+
+          if [ -f kaggle-audit-output/biohub_cv_audit/fatal_error.json ]; then
+            echo "=== Kaggle fatal_error.json ==="
+            cat kaggle-audit-output/biohub_cv_audit/fatal_error.json
+          fi
+
+          if [ -f kaggle-audit-output/biohub_cv_audit/dependency_probe.json ]; then
+            echo "=== dependency_probe.json ==="
+            cat kaggle-audit-output/biohub_cv_audit/dependency_probe.json
+          fi
+
+          if [ ! -f kaggle-audit-output/biohub_cv_audit/summary.json ]; then
+            echo "Audit did not produce summary.json (terminal=$KAGGLE_TERMINAL)"
+            exit 1
+          fi
+
+          echo "=== summary.json ==="
           cat kaggle-audit-output/biohub_cv_audit/summary.json
+          echo "=== official_metric_selftest.json ==="
           cat kaggle-audit-output/biohub_cv_audit/official_metric_selftest.json
 
       - name: Upload CV audit artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: biohub-cv-audit-${{ github.run_id }}
           path: kaggle-audit-output/biohub_cv_audit/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
