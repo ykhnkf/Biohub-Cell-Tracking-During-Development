@@ -39,17 +39,18 @@ jobs:
           pip install "kaggle>=2.2.4"
           kaggle --version
 
+      - name: Build and compile private Kaggle audit kernel
+        run: |
+          rm -rf .kaggle_cv_audit_kernel
+          python -m py_compile scripts/build_cv_audit_kernel.py scripts/evaluate_oof_graphs.py
+          python scripts/build_cv_audit_kernel.py
+          python -m py_compile .kaggle_cv_audit_kernel/run_audit.py
+          cat .kaggle_cv_audit_kernel/kernel-metadata.json
+
       - name: Verify Kaggle auth and competition access
         run: |
           test -n "$KAGGLE_API_TOKEN" || (echo "KAGGLE_API_TOKEN repository secret is missing" && exit 1)
           kaggle competitions files biohub-cell-tracking-during-development >/dev/null
-
-      - name: Build private Kaggle audit kernel
-        run: |
-          rm -rf .kaggle_cv_audit_kernel
-          python scripts/build_cv_audit_kernel.py
-          python -m py_compile .kaggle_cv_audit_kernel/run_audit.py
-          cat .kaggle_cv_audit_kernel/kernel-metadata.json
 
       - name: Push audit kernel to Kaggle
         run: kaggle kernels push -p .kaggle_cv_audit_kernel -t 180
