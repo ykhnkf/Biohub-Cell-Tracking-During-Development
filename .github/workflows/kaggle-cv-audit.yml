@@ -2,6 +2,11 @@ name: Biohub Kaggle CV Audit
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/cv-audit-trigger
 
 permissions:
   contents: read
