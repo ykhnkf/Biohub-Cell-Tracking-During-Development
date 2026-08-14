@@ -42,8 +42,8 @@ jobs:
       - name: Build and compile private Kaggle audit kernel
         run: |
           rm -rf .kaggle_cv_audit_kernel
-          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/evaluate_oof_graphs.py
-          python scripts/build_cv_audit_kernel_v3.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/evaluate_oof_graphs.py
+          python scripts/build_cv_audit_kernel_v4.py
           python -m py_compile .kaggle_cv_audit_kernel/run_audit.py
           cat .kaggle_cv_audit_kernel/kernel-metadata.json
 
