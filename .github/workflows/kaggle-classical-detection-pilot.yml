@@ -30,8 +30,8 @@ jobs:
           kaggle --version
       - name: Build kernel
         run: |
-          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_classical_detection_pilot_kernel.py
-          python scripts/build_classical_detection_pilot_kernel.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_classical_detection_pilot_kernel.py scripts/build_classical_detection_pilot_kernel_v2.py
+          python scripts/build_classical_detection_pilot_kernel_v2.py
           python -m py_compile .kaggle_classical_detection_pilot_kernel/run_detection_pilot.py
       - name: Verify competition access
         run: |
