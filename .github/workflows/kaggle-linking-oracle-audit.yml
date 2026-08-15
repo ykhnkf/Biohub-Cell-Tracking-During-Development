@@ -30,8 +30,8 @@ jobs:
           kaggle --version
       - name: Build kernel
         run: |
-          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_linking_oracle_audit_kernel.py scripts/build_linking_oracle_audit_kernel_v3.py
-          python scripts/build_linking_oracle_audit_kernel_v3.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_linking_oracle_audit_kernel.py scripts/build_linking_oracle_audit_kernel_v3.py scripts/build_linking_oracle_audit_kernel_v4.py
+          python scripts/build_linking_oracle_audit_kernel_v4.py
           python -m py_compile .kaggle_linking_oracle_kernel/run_linking_oracle.py
       - name: Push kernel and resolve actual Kaggle ref
         shell: bash
@@ -94,7 +94,8 @@ jobs:
           tok=json.loads((root/'run_token.json').read_text())
           if str(tok.get('github_run_id')) != os.environ['GITHUB_RUN_ID']: raise SystemExit('stale output')
           s=json.loads((root/'linking_oracle_summary.json').read_text())
-          if s.get('status') != 'passed' or int(s.get('n_datasets',0)) != 199: raise SystemExit(f'bad oracle status: {s}')
+          if s.get('status') != 'passed' or int(s.get('n_datasets',0)) != 40: raise SystemExit(f'bad oracle status: {s}')
+          if s.get('provenance') != 'gt_node_oracle_geometry_pilot_40_not_model_cv': raise SystemExit(f'bad provenance: {s.get("provenance")}')
           if not math.isfinite(float(s['best_gate_by_edge_jaccard']['edge_jaccard'])): raise SystemExit('non-finite oracle edge jaccard')
           print(json.dumps(s,indent=2))
           PY
