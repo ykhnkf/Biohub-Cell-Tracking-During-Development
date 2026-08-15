@@ -80,7 +80,7 @@ def build_worker() -> str:
         n_epochs=1,
         lr=1e-4,
         batch_size=1,
-        num_workers=2,
+        num_workers=0,
         unet_out_channels=32,
         unet_layers=[32,64,128],
         unet_weights=None,
@@ -100,7 +100,7 @@ def build_worker() -> str:
     weight_files = [str(p) for p in sorted(weights_dir.glob("*")) if p.is_file()]
     (OUT / "training_summary.json").write_text(json.dumps({
         "train_seconds":train_seconds,
-        "n_epochs":1,"max_iters":60,"batch_size":1,"downsample":[1,4,4],
+        "n_epochs":1,"max_iters":60,"batch_size":1,"num_workers":0,"downsample":[1,4,4],
         "weights_dir":str(weights_dir),"weight_files":weight_files,
     }, indent=2), encoding="utf-8")
 
@@ -163,7 +163,7 @@ def build_worker() -> str:
             "edge_endpoint_coverage_micro":re/ge if ge else float("nan"),"conditional_link_recall_micro":tp/re if re else float("nan"),
             "missing_node_gt_edges":sum(r["missing_node_gt_edges"] for r in rows),"link_miss_gt_edges":sum(r["link_miss_gt_edges"] for r in rows),"edge_fp":sum(r["edge_fp"] for r in rows),
         },
-        "training":{"n_train":len(train_names),"n_validation":len(val_names),"epochs":1,"max_iters":60,"random_init":True,"train_seconds":train_seconds},
+        "training":{"n_train":len(train_names),"n_validation":len(val_names),"epochs":1,"max_iters":60,"num_workers":0,"random_init":True,"train_seconds":train_seconds},
         "inference_config":{"det_threshold":0.5,"det_tta":False,"pool_kernel_um":5.0,"edge_threshold":0.5},
     }
     (OUT/"oof_smoke_summary.json").write_text(json.dumps(payload,indent=2,default=str),encoding="utf-8")
