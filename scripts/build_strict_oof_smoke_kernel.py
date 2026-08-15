@@ -42,6 +42,7 @@ def build_worker() -> str:
 
     import torch
     import tracksdata as td
+    from tracksdata.metrics import DistanceMatching
     from geff import GeffMetadata
     from biohub_tracking.io import DEFAULT_SCALE, open_dataset, save_graph
     from biohub_tracking.metrics import evaluate, node_recall, per_sample_metrics, summarise
@@ -133,15 +134,39 @@ def build_worker() -> str:
     def scale(name):
         try: return tuple(float(x) for x in open_dataset(TRAIN/name,load_image=False).scale)
         except Exception: return tuple(float(x) for x in DEFAULT_SCALE)
+    def ensure_node_matching(pred, gt, sc):
+        """Official evaluate() returns early for edge-less predictions before graph.match().
+
+        node_recall() requires MATCHED_NODE_ID to already exist, so explicitly
+        run the same DistanceMatching node match for this boundary case.
+        """
+        k=td.DEFAULT_ATTR_KEYS
+        if pred.num_nodes() == 0:
+            return False
+        if k.MATCHED_NODE_ID not in pred.node_attr_keys():
+            pred.match(gt, matching=DistanceMatching(max_distance=7.0, scale=sc))
+        return k.MATCHED_NODE_ID in pred.node_attr_keys()
+    def safe_node_recall(pred, gt, sc):
+        if pred.num_nodes() == 0 or gt.num_nodes() == 0:
+            return 0.0
+        if not ensure_node_matching(pred, gt, sc):
+            return 0.0
+        return float(node_recall(pred,gt))
     def matched_gt(pred):
-        k=td.DEFAULT_ATTR_KEYS; a=pred.node_attrs(attr_keys=[k.MATCHED_NODE_ID]); return {int(r[k.MATCHED_NODE_ID]) for r in a.to_dicts() if int(r[k.MATCHED_NODE_ID])>=0}
+        k=td.DEFAULT_ATTR_KEYS
+        if k.MATCHED_NODE_ID not in pred.node_attr_keys():
+            return set()
+        a=pred.node_attrs(attr_keys=[k.MATCHED_NODE_ID]); return {int(r[k.MATCHED_NODE_ID]) for r in a.to_dicts() if int(r[k.MATCHED_NODE_ID])>=0}
     def recoverable(gt,matched):
         k=td.DEFAULT_ATTR_KEYS; a=gt.edge_attrs(attr_keys=[k.EDGE_SOURCE,k.EDGE_TARGET]); return sum(int(r[k.EDGE_SOURCE]) in matched and int(r[k.EDGE_TARGET]) in matched for r in a.to_dicts())
 
     rows=[]; official_rows=[]
     for info in pred_manifest:
         name=info["dataset"]; pred=load_graph(pred_dir/f"{name}.geff"); gt=load_graph(TRAIN/f"{name}.geff")
-        er=evaluate(pred,gt,scale=scale(name),max_distance=7.0); rec=node_recall(pred,gt); total=estimated_total(TRAIN/f"{name}.geff")
+        sc=scale(name)
+        er=evaluate(pred,gt,scale=sc,max_distance=7.0)
+        rec=safe_node_recall(pred,gt,sc)
+        total=estimated_total(TRAIN/f"{name}.geff")
         pm=per_sample_metrics(er,total,rec); official_rows.append(pm); matched=matched_gt(pred); recov=recoverable(gt,matched); nge=int(gt.num_edges())
         rows.append({
             "dataset":name,"gt_nodes_sparse":int(gt.num_nodes()),"gt_edges":nge,"pred_nodes":int(er.num_pred_nodes),"estimated_total_nodes":total,
