@@ -37,12 +37,12 @@ jobs:
         run: |
           test -n "$KAGGLE_API_TOKEN"
           kaggle competitions files biohub-cell-tracking-during-development >/dev/null
-      - name: Push kernel and resolve actual Kaggle ref
+      - name: Push kernel on T4 and resolve actual Kaggle ref
         shell: bash
         run: |
           set -euo pipefail
           push_log="$(mktemp)"
-          kaggle kernels push -p .kaggle_strict_oof_smoke_kernel -t 180 2>&1 | tee "$push_log"
+          kaggle kernels push -p .kaggle_strict_oof_smoke_kernel --accelerator NvidiaTeslaT4 -t 180 2>&1 | tee "$push_log"
           kernel_url="$(grep -Eo 'https://www\.kaggle\.com/code/[^[:space:]]+' "$push_log" | tail -1 || true)"
           if [ -z "$kernel_url" ]; then
             echo "::error::Could not parse Kaggle kernel URL from push output."
