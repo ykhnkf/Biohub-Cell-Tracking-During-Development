@@ -9,13 +9,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: biohub-kaggle-linking-oracle
+  cancel-in-progress: true
+
 jobs:
   linking-oracle:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      KERNEL_REF: ykhnkf/biohub-linking-oracle-audit
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,8 +33,26 @@ jobs:
           python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_linking_oracle_audit_kernel.py
           python scripts/build_linking_oracle_audit_kernel.py
           python -m py_compile .kaggle_linking_oracle_kernel/run_linking_oracle.py
-      - name: Push kernel
-        run: kaggle kernels push -p .kaggle_linking_oracle_kernel -t 180
+      - name: Push kernel and resolve actual Kaggle ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          push_log="$(mktemp)"
+          kaggle kernels push -p .kaggle_linking_oracle_kernel -t 180 2>&1 | tee "$push_log"
+          kernel_url="$(grep -Eo 'https://www\.kaggle\.com/code/[^[:space:]]+' "$push_log" | tail -1 || true)"
+          if [ -z "$kernel_url" ]; then
+            echo "::error::Could not parse Kaggle kernel URL from push output."
+            cat "$push_log"
+            exit 1
+          fi
+          kernel_ref="$(printf '%s' "$kernel_url" | sed -E 's#https://www\.kaggle\.com/code/([^/]+/[^/?[:space:]]+).*#\1#')"
+          if ! echo "$kernel_ref" | grep -Eq '^[^/]+/[^/]+$'; then
+            echo "::error::Parsed invalid Kaggle ref '$kernel_ref' from '$kernel_url'."
+            exit 1
+          fi
+          echo "Resolved Kaggle ref: $kernel_ref"
+          echo "KERNEL_REF=$kernel_ref" >> "$GITHUB_ENV"
+          echo "KERNEL_URL=$kernel_url" >> "$GITHUB_ENV"
       - name: Wait for terminal state
         shell: bash
         run: |
@@ -46,6 +67,7 @@ jobs:
           done
           [ -n "$terminal" ] || terminal=timeout
           echo "KAGGLE_TERMINAL=$terminal" >> "$GITHUB_ENV"
+          echo "Kaggle ref: $KERNEL_REF ($KERNEL_URL)"
       - name: Download and validate
         shell: bash
         run: |
@@ -59,7 +81,7 @@ jobs:
           [ -z "$log_file" ] || tail -n 250 "$log_file"
           root=kaggle-linking-oracle-output/biohub_linking_oracle
           for f in run_token progress fatal_error gt_edge_displacement_um linking_oracle_summary; do [ ! -f "$root/$f.json" ] || { echo "=== $f ==="; cat "$root/$f.json"; }; done
-          [ "$KAGGLE_TERMINAL" = success ] || { echo "Kaggle terminal=$KAGGLE_TERMINAL"; exit 1; }
+          [ "$KAGGLE_TERMINAL" = success ] || { echo "Kaggle terminal=$KAGGLE_TERMINAL for $KERNEL_REF"; exit 1; }
           [ "$rc" -eq 0 ] || exit "$rc"
           python - <<'PY'
           import json, math, os
