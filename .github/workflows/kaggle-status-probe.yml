@@ -23,27 +23,21 @@ jobs:
         run: |
           pip install -q "kaggle>=2.2.4"
           kaggle --version
-      - name: List my kernels
-        shell: bash
-        run: |
-          set -u
-          echo '=== kaggle kernels list --mine ==='
-          kaggle kernels list --mine --page-size 100 || true
-      - name: Probe kernels
+      - name: Probe title-derived refs
         shell: bash
         run: |
           set -u
           for ref in \
-            ykhnkf/biohub-pretrained-reference \
-            ykhnkf/biohub-strict-oof-smoke \
-            ykhnkf/biohub-linking-oracle-audit; do
+            ykhnkf/biohub-pretrained-reference-diagnostics \
+            ykhnkf/biohub-strict-oof-train-predict-score-smoke \
+            ykhnkf/biohub-gt-node-linking-oracle-audit; do
             echo "=== STATUS $ref ==="
             kaggle kernels status "$ref" || true
             echo "=== FILES $ref ==="
             kaggle kernels files "$ref" --page-size 100 || true
-            echo "=== OUTPUT PROBE $ref ==="
+            echo "=== OUTPUT $ref ==="
             rm -rf /tmp/kaggle-probe-output
             mkdir -p /tmp/kaggle-probe-output
             kaggle kernels output "$ref" -p /tmp/kaggle-probe-output -o || true
-            find /tmp/kaggle-probe-output -maxdepth 3 -type f -printf '%p %s bytes\n' || true
+            find /tmp/kaggle-probe-output -maxdepth 4 -type f -printf '%p %s bytes\n' || true
           done
