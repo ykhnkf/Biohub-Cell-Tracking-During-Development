@@ -1,0 +1,64 @@
+name: Biohub Strict OOF Peak Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/strict-oof-peak-diagnostic-trigger*]
+
+permissions:
+  contents: read
+
+jobs:
+  peak-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Install Kaggle CLI
+        run: pip install -q "kaggle>=2.2.4"
+      - name: Build
+        run: |
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v7.py scripts/build_strict_oof_smoke_kernel.py scripts/build_strict_oof_peak_diagnostic_kernel.py
+          python scripts/build_strict_oof_peak_diagnostic_kernel.py
+          python -m py_compile .kaggle_strict_oof_peak_diagnostic_kernel/run_peak_diagnostic.py
+          ! grep -q 'rglob(' .kaggle_strict_oof_peak_diagnostic_kernel/run_peak_diagnostic.py
+      - name: Push T4
+        shell: bash
+        run: |
+          set -euo pipefail
+          log=$(mktemp)
+          kaggle kernels push -p .kaggle_strict_oof_peak_diagnostic_kernel --accelerator NvidiaTeslaT4 -t 120 2>&1 | tee "$log"
+          url=$(grep -Eo 'https://www\.kaggle\.com/code/[^[:space:]]+' "$log" | tail -1)
+          ref=$(printf '%s' "$url" | sed -E 's#https://www\.kaggle\.com/code/([^/]+/[^/?[:space:]]+).*#\1#')
+          echo "KERNEL_REF=$ref" >> "$GITHUB_ENV"
+      - name: Wait
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 600); do
+            s=$(kaggle kernels status "$KERNEL_REF" 2>&1 || true); echo "$s"
+            echo "$s" | grep -Eqi 'complete|success' && exit 0
+            echo "$s" | grep -Eqi 'error|fail|cancel' && exit 1
+            sleep 10
+          done
+          exit 1
+      - name: Download
+        run: |
+          mkdir -p peak-diagnostic-output
+          kaggle kernels output "$KERNEL_REF" -p peak-diagnostic-output -o
+          root=peak-diagnostic-output/biohub_strict_oof_peak_diagnostic
+          find "$root" -maxdepth 2 -type f -print
+          [ ! -f "$root/fatal_error.json" ] || { cat "$root/fatal_error.json"; exit 1; }
+          cat "$root/peak_diagnostic.json"
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: biohub-peak-diagnostic-${{ github.run_id }}
+          path: peak-diagnostic-output/
+          retention-days: 30
