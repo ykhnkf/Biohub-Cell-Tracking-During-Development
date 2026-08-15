@@ -1,0 +1,50 @@
+name: Biohub Peak Diagnostic Retrieve
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/peak-diagnostic-retrieve-trigger*]
+
+permissions:
+  contents: read
+
+jobs:
+  retrieve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KERNEL_REF: ykhnkf/biohub-strict-oof-peak-diagnostic
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Install Kaggle CLI
+        run: pip install -q "kaggle>=2.2.4"
+      - name: Status logs and outputs
+        shell: bash
+        run: |
+          set -u
+          mkdir -p peak-retrieved
+          echo '=== status ==='
+          kaggle kernels status "$KERNEL_REF" || true
+          echo '=== logs ==='
+          kaggle kernels logs "$KERNEL_REF" > peak-retrieved/kaggle.log 2>&1 || true
+          tail -n 300 peak-retrieved/kaggle.log || true
+          echo '=== output ==='
+          kaggle kernels output "$KERNEL_REF" -p peak-retrieved -o || true
+          find peak-retrieved -maxdepth 4 -type f -print | sort
+          root=peak-retrieved/biohub_strict_oof_peak_diagnostic
+          for f in stage_00_ready stage_01_before_train stage_02_train_returned peak_diagnostic fatal_error; do
+            [ ! -f "$root/$f.json" ] || { echo "=== $f ==="; cat "$root/$f.json"; }
+          done
+          for f in "$root"/peaks_*.json; do
+            [ ! -f "$f" ] || { echo "=== $(basename "$f") ==="; cat "$f"; }
+          done
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: biohub-peak-retrieved-${{ github.run_id }}
+          path: peak-retrieved/
+          retention-days: 30
