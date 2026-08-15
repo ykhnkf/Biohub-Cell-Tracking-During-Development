@@ -1,0 +1,96 @@
+name: Biohub Strict OOF GPU Preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/strict-oof-preflight-trigger]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: biohub-strict-oof-gpu-preflight
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Kaggle CLI
+        run: |
+          pip install "kaggle>=2.2.4"
+          kaggle --version
+      - name: Build preflight kernel
+        run: |
+          python -m py_compile scripts/build_strict_oof_preflight_kernel.py
+          python scripts/build_strict_oof_preflight_kernel.py
+          python -m py_compile .kaggle_strict_oof_preflight_kernel/run_preflight.py
+      - name: Verify access
+        run: |
+          test -n "$KAGGLE_API_TOKEN"
+          kaggle competitions files biohub-cell-tracking-during-development >/dev/null
+      - name: Push kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          kaggle kernels push -p .kaggle_strict_oof_preflight_kernel -t 120 2>&1 | tee "$log"
+          url="$(grep -Eo 'https://www\.kaggle\.com/code/[^[:space:]]+' "$log" | tail -1 || true)"
+          test -n "$url"
+          ref="$(printf '%s' "$url" | sed -E 's#https://www\.kaggle\.com/code/([^/]+/[^/?[:space:]]+).*#\1#')"
+          echo "KERNEL_REF=$ref" >> "$GITHUB_ENV"
+      - name: Wait
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal=""
+          for i in $(seq 1 120); do
+            s="$(kaggle kernels status "$KERNEL_REF" 2>&1 || true)"
+            echo "$s"
+            if echo "$s" | grep -Eqi 'complete|success'; then terminal=success; break; fi
+            if echo "$s" | grep -Eqi 'error|fail|cancel'; then terminal=failure; break; fi
+            sleep 10
+          done
+          [ -n "$terminal" ] || terminal=timeout
+          echo "KAGGLE_TERMINAL=$terminal" >> "$GITHUB_ENV"
+      - name: Download and validate
+        shell: bash
+        run: |
+          set -u
+          rm -rf kaggle-strict-oof-preflight-output
+          mkdir -p kaggle-strict-oof-preflight-output
+          rc=0
+          kaggle kernels output "$KERNEL_REF" -p kaggle-strict-oof-preflight-output -o || rc=$?
+          find kaggle-strict-oof-preflight-output -maxdepth 3 -type f -print || true
+          root=kaggle-strict-oof-preflight-output/biohub_strict_oof_preflight
+          for f in stage_00_started stage_01_cuda stage_02_input_layout stage_03_support preflight_summary; do
+            [ ! -f "$root/$f.json" ] || { echo "=== $f ==="; cat "$root/$f.json"; }
+          done
+          [ "$KAGGLE_TERMINAL" = success ] || exit 1
+          [ "$rc" -eq 0 ] || exit "$rc"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path('kaggle-strict-oof-preflight-output/biohub_strict_oof_preflight')
+          s=json.loads((root/'preflight_summary.json').read_text())
+          assert s['status']=='passed'
+          assert str(s['github_run_id'])==os.environ['GITHUB_RUN_ID']
+          assert s['cuda']['available']
+          assert s['n_complete_pairs']==28
+          print(json.dumps(s,indent=2))
+          PY
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: biohub-strict-oof-preflight-${{ github.run_id }}
+          path: kaggle-strict-oof-preflight-output/
+          retention-days: 30
