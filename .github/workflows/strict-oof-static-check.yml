@@ -1,0 +1,50 @@
+name: Biohub Strict OOF Static Check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/strict-oof-static-trigger]
+
+permissions:
+  contents: read
+
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build and inspect v4 worker
+        env:
+          GITHUB_RUN_ID: static-check
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/build_cv_audit_kernel_v3.py \
+            scripts/build_cv_audit_kernel_v4.py \
+            scripts/build_cv_audit_kernel_v5.py \
+            scripts/build_cv_audit_kernel_v6.py \
+            scripts/build_cv_audit_kernel_v7.py \
+            scripts/build_strict_oof_smoke_kernel.py \
+            scripts/build_strict_oof_smoke_kernel_v2.py \
+            scripts/build_strict_oof_smoke_kernel_v3.py \
+            scripts/build_strict_oof_smoke_kernel_v4.py
+          python scripts/build_strict_oof_smoke_kernel_v4.py
+          python -m py_compile .kaggle_strict_oof_smoke_kernel/run_strict_oof_smoke.py
+          worker=.kaggle_strict_oof_smoke_kernel/run_strict_oof_smoke.py
+          if grep -q 'input_root.rglob' "$worker"; then
+            echo '::error::Recursive /kaggle/input scan is still present'
+            exit 1
+          fi
+          for marker in \
+            stage_00_enter_run stage_01_input_ok stage_02_before_support stage_03_support_ok \
+            stage_04_before_dependencies stage_05_dependencies_ok stage_06_official_source_ok \
+            stage_07_imports_ok stage_08_before_train stage_09_train_returned; do
+            grep -q "$marker" "$worker" || { echo "::error::Missing marker $marker"; exit 1; }
+          done
+          grep -q 'model = train(' "$worker"
+          echo 'Strict OOF v4 static check passed.'
