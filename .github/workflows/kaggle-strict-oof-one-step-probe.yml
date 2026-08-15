@@ -37,12 +37,12 @@ jobs:
         run: |
           test -n "$KAGGLE_API_TOKEN"
           kaggle competitions files biohub-cell-tracking-during-development >/dev/null
-      - name: Push kernel
+      - name: Push kernel on T4
         shell: bash
         run: |
           set -euo pipefail
           log="$(mktemp)"
-          kaggle kernels push -p .kaggle_strict_oof_one_step_probe_kernel -t 120 2>&1 | tee "$log"
+          kaggle kernels push -p .kaggle_strict_oof_one_step_probe_kernel --accelerator NvidiaTeslaT4 -t 120 2>&1 | tee "$log"
           url="$(grep -Eo 'https://www\.kaggle\.com/code/[^[:space:]]+' "$log" | tail -1 || true)"
           test -n "$url"
           ref="$(printf '%s' "$url" | sed -E 's#https://www\.kaggle\.com/code/([^/]+/[^/?[:space:]]+).*#\1#')"
