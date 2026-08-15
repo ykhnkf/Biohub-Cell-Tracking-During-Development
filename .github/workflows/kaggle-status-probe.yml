@@ -20,24 +20,18 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install Kaggle CLI
-        run: |
-          pip install -q "kaggle>=2.2.4"
-          kaggle --version
-      - name: Probe title-derived refs
+        run: pip install -q "kaggle>=2.2.4"
+      - name: Fetch oracle diagnostics
         shell: bash
         run: |
           set -u
-          for ref in \
-            ykhnkf/biohub-pretrained-reference-diagnostics \
-            ykhnkf/biohub-strict-oof-train-predict-score-smoke \
-            ykhnkf/biohub-gt-node-linking-oracle-audit; do
-            echo "=== STATUS $ref ==="
-            kaggle kernels status "$ref" || true
-            echo "=== FILES $ref ==="
-            kaggle kernels files "$ref" --page-size 100 || true
-            echo "=== OUTPUT $ref ==="
-            rm -rf /tmp/kaggle-probe-output
-            mkdir -p /tmp/kaggle-probe-output
-            kaggle kernels output "$ref" -p /tmp/kaggle-probe-output -o || true
-            find /tmp/kaggle-probe-output -maxdepth 4 -type f -printf '%p %s bytes\n' || true
-          done
+          ref=ykhnkf/biohub-gt-node-linking-oracle-audit
+          rm -rf /tmp/oracle
+          mkdir -p /tmp/oracle
+          kaggle kernels status "$ref" || true
+          kaggle kernels output "$ref" -p /tmp/oracle -o || true
+          echo '=== fatal_error.json ==='
+          cat /tmp/oracle/biohub_linking_oracle/fatal_error.json || true
+          echo '=== kernel log tail ==='
+          log="$(find /tmp/oracle -maxdepth 2 -name '*.log' -type f | head -1 || true)"
+          [ -z "$log" ] || tail -n 250 "$log"
