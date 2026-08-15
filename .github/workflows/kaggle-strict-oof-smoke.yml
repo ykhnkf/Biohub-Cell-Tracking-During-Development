@@ -30,8 +30,8 @@ jobs:
           kaggle --version
       - name: Build kernel
         run: |
-          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_strict_oof_smoke_kernel.py
-          python scripts/build_strict_oof_smoke_kernel.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_strict_oof_smoke_kernel.py scripts/build_strict_oof_smoke_kernel_v2.py
+          python scripts/build_strict_oof_smoke_kernel_v2.py
           python -m py_compile .kaggle_strict_oof_smoke_kernel/run_strict_oof_smoke.py
       - name: Verify access
         run: |
