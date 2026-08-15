@@ -1,0 +1,96 @@
+name: Biohub Kaggle GT Geometry Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/gt-geometry-trigger]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: biohub-kaggle-gt-geometry
+  cancel-in-progress: true
+
+jobs:
+  geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Kaggle CLI
+        run: |
+          pip install "kaggle>=2.2.4"
+          kaggle --version
+      - name: Build kernel
+        run: |
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_gt_geometry_audit_kernel.py
+          python scripts/build_gt_geometry_audit_kernel.py
+          python -m py_compile .kaggle_gt_geometry_audit_kernel/run_geometry_audit.py
+      - name: Push kernel and resolve ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          push_log="$(mktemp)"
+          kaggle kernels push -p .kaggle_gt_geometry_audit_kernel -t 180 2>&1 | tee "$push_log"
+          kernel_url="$(grep -Eo 'https://www\.kaggle\.com/code/[^[:space:]]+' "$push_log" | tail -1 || true)"
+          [ -n "$kernel_url" ] || { cat "$push_log"; exit 1; }
+          kernel_ref="$(printf '%s' "$kernel_url" | sed -E 's#https://www\.kaggle\.com/code/([^/]+/[^/?[:space:]]+).*#\1#')"
+          echo "KERNEL_REF=$kernel_ref" >> "$GITHUB_ENV"
+          echo "KERNEL_URL=$kernel_url" >> "$GITHUB_ENV"
+      - name: Wait for terminal state
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal=""
+          for i in $(seq 1 240); do
+            s="$(kaggle kernels status "$KERNEL_REF" 2>&1 || true)"
+            echo "$s"
+            if echo "$s" | grep -Eqi 'complete|success'; then terminal=success; break; fi
+            if echo "$s" | grep -Eqi 'error|fail|cancel'; then terminal=failure; break; fi
+            sleep 15
+          done
+          [ -n "$terminal" ] || terminal=timeout
+          echo "KAGGLE_TERMINAL=$terminal" >> "$GITHUB_ENV"
+      - name: Download and validate
+        shell: bash
+        run: |
+          set -u
+          rm -rf kaggle-gt-geometry-output
+          mkdir -p kaggle-gt-geometry-output
+          rc=0
+          kaggle kernels output "$KERNEL_REF" -p kaggle-gt-geometry-output -o || rc=$?
+          root=kaggle-gt-geometry-output/biohub_gt_geometry_audit
+          find kaggle-gt-geometry-output -maxdepth 4 -type f -print || true
+          log_file="$(find kaggle-gt-geometry-output -maxdepth 2 -name '*.log' -type f | head -1 || true)"
+          [ -z "$log_file" ] || tail -n 250 "$log_file"
+          for f in run_token progress fatal_error geometry_summary; do [ ! -f "$root/$f.json" ] || { echo "=== $f ==="; cat "$root/$f.json"; }; done
+          [ "$KAGGLE_TERMINAL" = success ] || exit 1
+          [ "$rc" -eq 0 ] || exit "$rc"
+          python - <<'PY'
+          import json, math, os
+          from pathlib import Path
+          root=Path('kaggle-gt-geometry-output/biohub_gt_geometry_audit')
+          req=['run_token.json','geometry_per_dataset.csv','geometry_summary.json']
+          miss=[x for x in req if not (root/x).is_file()]
+          if miss: raise SystemExit(f'Missing outputs: {miss}')
+          if (root/'fatal_error.json').exists(): raise SystemExit('fatal_error.json present')
+          tok=json.loads((root/'run_token.json').read_text())
+          if str(tok.get('github_run_id')) != os.environ['GITHUB_RUN_ID']: raise SystemExit('stale output')
+          s=json.loads((root/'geometry_summary.json').read_text())
+          if s.get('status') != 'passed' or int(s.get('n_datasets',0)) != 199: raise SystemExit(f'bad summary: {s}')
+          print(json.dumps(s,indent=2))
+          PY
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: biohub-gt-geometry-${{ github.run_id }}
+          path: kaggle-gt-geometry-output/
+          retention-days: 30
