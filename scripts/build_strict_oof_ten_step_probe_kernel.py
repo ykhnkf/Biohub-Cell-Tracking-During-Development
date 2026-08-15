@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -23,15 +24,20 @@ def build_worker() -> str:
         ("strict_oof_one_step_probe", "strict_oof_ten_step_probe"),
         ("one_step_splits.json", "ten_step_splits.json"),
         ("one_step_probe_summary.json", "ten_step_probe_summary.json"),
-        ('"max_iters":1', '"max_iters":10'),
-        ("max_iters=1", "max_iters=10"),
     ]
     for old, new in replacements:
         worker = worker.replace(old, new)
-    if "max_iters=1" in worker or '"max_iters":1' in worker:
+
+    # Replace both Python keyword syntax and JSON/dict syntax regardless of spacing.
+    worker = re.sub(r"max_iters\s*=\s*1\b", "max_iters=10", worker)
+    worker = re.sub(r'("max_iters"\s*:\s*)1\b', r'\g<1>10', worker)
+
+    if re.search(r"max_iters\s*=\s*1\b", worker) or re.search(r'"max_iters"\s*:\s*1\b', worker):
         raise RuntimeError("One-step max_iters marker remains in generated ten-step worker")
-    if "max_iters=10" not in worker or '"max_iters":10' not in worker:
-        raise RuntimeError("Ten-step max_iters markers missing")
+    if not re.search(r"max_iters\s*=\s*10\b", worker):
+        raise RuntimeError("Ten-step train-call max_iters marker missing")
+    if not re.search(r'"max_iters"\s*:\s*10\b', worker):
+        raise RuntimeError("Ten-step summary max_iters marker missing")
     return worker
 
 
