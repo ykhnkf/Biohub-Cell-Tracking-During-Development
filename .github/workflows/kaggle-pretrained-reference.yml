@@ -9,13 +9,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: biohub-kaggle-pretrained-reference
+  cancel-in-progress: true
+
 jobs:
   reference:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      KERNEL_REF: ykhnkf/biohub-pretrained-reference
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,8 +37,26 @@ jobs:
         run: |
           test -n "$KAGGLE_API_TOKEN"
           kaggle competitions files biohub-cell-tracking-during-development >/dev/null
-      - name: Push kernel
-        run: kaggle kernels push -p .kaggle_pretrained_reference_kernel -t 180
+      - name: Push kernel and resolve actual Kaggle ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          push_log="$(mktemp)"
+          kaggle kernels push -p .kaggle_pretrained_reference_kernel -t 180 2>&1 | tee "$push_log"
+          kernel_url="$(grep -Eo 'https://www\.kaggle\.com/code/[^[:space:]]+' "$push_log" | tail -1 || true)"
+          if [ -z "$kernel_url" ]; then
+            echo "::error::Could not parse Kaggle kernel URL from push output."
+            cat "$push_log"
+            exit 1
+          fi
+          kernel_ref="$(printf '%s' "$kernel_url" | sed -E 's#https://www\.kaggle\.com/code/([^/]+/[^/?[:space:]]+).*#\1#')"
+          if ! echo "$kernel_ref" | grep -Eq '^[^/]+/[^/]+$'; then
+            echo "::error::Invalid Kaggle ref '$kernel_ref'."
+            exit 1
+          fi
+          echo "Resolved Kaggle ref: $kernel_ref"
+          echo "KERNEL_REF=$kernel_ref" >> "$GITHUB_ENV"
+          echo "KERNEL_URL=$kernel_url" >> "$GITHUB_ENV"
       - name: Wait for terminal state
         shell: bash
         run: |
@@ -50,6 +71,7 @@ jobs:
           done
           [ -n "$terminal" ] || terminal=timeout
           echo "KAGGLE_TERMINAL=$terminal" >> "$GITHUB_ENV"
+          echo "Kaggle ref: $KERNEL_REF ($KERNEL_URL)"
       - name: Download and validate
         shell: bash
         run: |
@@ -63,7 +85,7 @@ jobs:
           [ -z "$log_file" ] || { echo '=== log tail ==='; tail -n 250 "$log_file"; }
           root=kaggle-pretrained-reference-output/biohub_pretrained_reference
           for f in run_token progress fatal_error reference_summary; do [ ! -f "$root/$f.json" ] || { echo "=== $f ==="; cat "$root/$f.json"; }; done
-          [ "$KAGGLE_TERMINAL" = success ] || { echo "Kaggle terminal=$KAGGLE_TERMINAL"; exit 1; }
+          [ "$KAGGLE_TERMINAL" = success ] || { echo "Kaggle terminal=$KAGGLE_TERMINAL for $KERNEL_REF"; exit 1; }
           [ "$rc" -eq 0 ] || exit "$rc"
           python - <<'PY'
           import json, math, os
