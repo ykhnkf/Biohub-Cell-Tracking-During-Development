@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [.github/strict-oof-one-step-trigger]
+    paths: [.github/strict-oof-one-step-trigger*]
 
 permissions:
   contents: read
