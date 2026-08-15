@@ -72,8 +72,12 @@ def build_worker() -> str:
 
     def make_pred(attrs, scale, gate):
         g = td.graph.InMemoryGraph()
+        # The Kaggle support pack currently installs a TracksData/Polars
+        # combination where the Polars DataTypeClass (pl.Float64) is rejected
+        # by pl.Series(dtype=...).  Passing the instantiated dtype is accepted
+        # by Polars while preserving a Float64 TracksData schema.
         for key in ["z", "y", "x"]:
-            g.add_node_attr_key(key, pl.Float64, -999999.0)
+            g.add_node_attr_key(key, dtype=pl.Float64(), default_value=-999999.0)
         rows = attrs.to_dicts()
         new_ids = g.bulk_add_nodes([{"t":int(r["t"]),"z":float(r["z"]),"y":float(r["y"]),"x":float(r["x"])} for r in rows])
         by_t = {}
