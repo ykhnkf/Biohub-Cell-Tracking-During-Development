@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -94,6 +95,19 @@ def build_worker() -> str:
         '"metric_selftest": metric_selftest["status"],',
         1,
     )
+
+    # Stamp every Kaggle output with the originating GitHub Actions run ID.
+    # This makes a stale output from an earlier kernel version impossible to
+    # accept as a successful current run.
+    run_token = os.environ.get("GITHUB_RUN_ID", "local")
+    needle = 'OUT.mkdir(parents=True, exist_ok=True)\n'
+    injection = needle + (
+        f'AUDIT_RUN_TOKEN = {run_token!r}\n'
+        '(OUT / "run_token.json").write_text(json.dumps({"github_run_id": AUDIT_RUN_TOKEN}, indent=2), encoding="utf-8")\n'
+    )
+    if needle not in worker:
+        raise RuntimeError("Could not locate OUT initialization for run-token injection")
+    worker = worker.replace(needle, injection, 1)
     return worker
 
 
@@ -124,6 +138,7 @@ def main() -> None:
         "kernel": KERNEL_ID,
         "support_dataset": SUPPORT_DATASET,
         "mode": "manifest-plus-targeted-metric-selftest-v7",
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "local"),
     }, indent=2))
 
 
