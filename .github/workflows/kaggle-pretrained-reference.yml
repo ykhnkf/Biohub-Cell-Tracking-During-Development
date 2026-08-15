@@ -30,8 +30,8 @@ jobs:
           kaggle --version
       - name: Build kernel
         run: |
-          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_pretrained_reference_kernel.py scripts/build_pretrained_reference_kernel_v2.py
-          python scripts/build_pretrained_reference_kernel_v2.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_pretrained_reference_kernel.py scripts/build_pretrained_reference_kernel_v2.py scripts/build_pretrained_reference_kernel_v3.py
+          python scripts/build_pretrained_reference_kernel_v3.py
           python -m py_compile .kaggle_pretrained_reference_kernel/run_reference.py
       - name: Verify access
         run: |
