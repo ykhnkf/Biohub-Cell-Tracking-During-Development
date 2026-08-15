@@ -30,8 +30,8 @@ jobs:
           kaggle --version
       - name: Build kernel
         run: |
-          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_strict_oof_smoke_kernel.py scripts/build_strict_oof_smoke_kernel_v2.py scripts/build_strict_oof_smoke_kernel_v3.py
-          python scripts/build_strict_oof_smoke_kernel_v3.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_strict_oof_smoke_kernel.py scripts/build_strict_oof_smoke_kernel_v2.py scripts/build_strict_oof_smoke_kernel_v3.py scripts/build_strict_oof_smoke_kernel_v4.py
+          python scripts/build_strict_oof_smoke_kernel_v4.py
           python -m py_compile .kaggle_strict_oof_smoke_kernel/run_strict_oof_smoke.py
       - name: Verify access
         run: |
@@ -84,14 +84,20 @@ jobs:
           log_file="$(find kaggle-strict-oof-smoke-output -maxdepth 2 -name '*.log' -type f | head -1 || true)"
           [ -z "$log_file" ] || { echo '=== log tail ==='; tail -n 300 "$log_file"; }
           root=kaggle-strict-oof-smoke-output/biohub_strict_oof_smoke
-          for f in run_token strict_input_layout progress split_manifest training_summary fatal_error oof_smoke_summary; do [ ! -f "$root/$f.json" ] || { echo "=== $f ==="; cat "$root/$f.json"; }; done
+          for f in \
+            run_token strict_input_layout progress split_manifest training_summary fatal_error oof_smoke_summary \
+            stage_00_enter_run stage_01_input_ok stage_02_before_support stage_03_support_ok \
+            stage_04_before_dependencies stage_05_dependencies_ok stage_06_official_source_ok \
+            stage_07_imports_ok stage_08_before_train stage_09_train_returned; do
+            [ ! -f "$root/$f.json" ] || { echo "=== $f ==="; cat "$root/$f.json"; }
+          done
           [ "$KAGGLE_TERMINAL" = success ] || { echo "Kaggle terminal=$KAGGLE_TERMINAL for $KERNEL_REF"; exit 1; }
           [ "$rc" -eq 0 ] || exit "$rc"
           python - <<'PY'
           import json, math, os
           from pathlib import Path
           root=Path('kaggle-strict-oof-smoke-output/biohub_strict_oof_smoke')
-          req=['run_token.json','strict_input_layout.json','split_manifest.json','training_summary.json','prediction_manifest.csv','oof_smoke_per_dataset.csv','oof_smoke_summary.json']
+          req=['run_token.json','strict_input_layout.json','split_manifest.json','training_summary.json','prediction_manifest.csv','oof_smoke_per_dataset.csv','oof_smoke_summary.json','stage_09_train_returned.json']
           miss=[x for x in req if not (root/x).is_file()]
           if miss: raise SystemExit(f'Missing outputs: {miss}')
           if (root/'fatal_error.json').exists(): raise SystemExit('fatal_error.json present')
