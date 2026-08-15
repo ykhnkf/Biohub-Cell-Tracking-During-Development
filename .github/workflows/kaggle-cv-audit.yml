@@ -42,8 +42,8 @@ jobs:
       - name: Build and compile private Kaggle audit kernel
         run: |
           rm -rf .kaggle_cv_audit_kernel
-          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/evaluate_oof_graphs.py
-          python scripts/build_cv_audit_kernel_v6.py
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/evaluate_oof_graphs.py
+          python scripts/build_cv_audit_kernel_v7.py
           python -m py_compile .kaggle_cv_audit_kernel/run_audit.py
           cat .kaggle_cv_audit_kernel/kernel-metadata.json
 
@@ -60,15 +60,16 @@ jobs:
         run: |
           set -euo pipefail
           terminal=""
+          last_status=""
           for i in $(seq 1 180); do
             echo "Poll $i"
-            status="$(kaggle kernels status "$KERNEL_REF" 2>&1 || true)"
-            echo "$status"
-            if echo "$status" | grep -Eqi 'complete|success'; then
+            last_status="$(kaggle kernels status "$KERNEL_REF" 2>&1 || true)"
+            echo "$last_status"
+            if echo "$last_status" | grep -Eqi 'complete|success'; then
               terminal="success"
               break
             fi
-            if echo "$status" | grep -Eqi 'error|fail|cancel'; then
+            if echo "$last_status" | grep -Eqi 'error|fail|cancel'; then
               terminal="failure"
               break
             fi
@@ -80,13 +81,15 @@ jobs:
           echo "KAGGLE_TERMINAL=$terminal" >> "$GITHUB_ENV"
           echo "Kaggle terminal state: $terminal"
 
-      - name: Download audit outputs and diagnostics
+      - name: Download and validate audit outputs
         shell: bash
         run: |
           set -u
           rm -rf kaggle-audit-output
           mkdir -p kaggle-audit-output
-          kaggle kernels output "$KERNEL_REF" -p kaggle-audit-output -o || true
+
+          output_rc=0
+          kaggle kernels output "$KERNEL_REF" -p kaggle-audit-output -o || output_rc=$?
           find kaggle-audit-output -maxdepth 5 -type f -print || true
 
           log_file="$(find kaggle-audit-output -maxdepth 2 -name '*.log' -type f | head -1 || true)"
@@ -95,7 +98,7 @@ jobs:
             tail -n 250 "$log_file"
           fi
 
-          for diagnostic in train_layout progress dependency_probe last_pip import_failures dependency_after graph_failures fatal_error; do
+          for diagnostic in run_token train_layout progress dependency_probe last_pip import_failures dependency_after graph_failures fatal_error; do
             file="kaggle-audit-output/biohub_cv_audit/${diagnostic}.json"
             if [ -f "$file" ]; then
               echo "=== ${diagnostic}.json ==="
@@ -103,10 +106,56 @@ jobs:
             fi
           done
 
-          if [ ! -f kaggle-audit-output/biohub_cv_audit/summary.json ]; then
-            echo "Audit did not produce summary.json (terminal=$KAGGLE_TERMINAL)"
+          if [ "$KAGGLE_TERMINAL" != "success" ]; then
+            echo "::error::Kaggle kernel ended with terminal state '$KAGGLE_TERMINAL'."
             exit 1
           fi
+          if [ "$output_rc" -ne 0 ]; then
+            echo "::error::kaggle kernels output failed with exit code $output_rc."
+            exit "$output_rc"
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("kaggle-audit-output/biohub_cv_audit")
+          required = [
+              root / "run_token.json",
+              root / "summary.json",
+              root / "dataset_manifest.csv",
+              root / "folds_balanced_5.json",
+              root / "official_metric_selftest.json",
+          ]
+          missing = [str(p) for p in required if not p.is_file()]
+          if missing:
+              raise SystemExit("Missing required audit outputs: " + ", ".join(missing))
+
+          token = json.loads((root / "run_token.json").read_text())
+          expected_run = os.environ["GITHUB_RUN_ID"]
+          if str(token.get("github_run_id")) != expected_run:
+              raise SystemExit(
+                  f"Stale Kaggle output: run token {token.get('github_run_id')!r} != current GitHub run {expected_run!r}"
+              )
+
+          summary = json.loads((root / "summary.json").read_text())
+          selftest = json.loads((root / "official_metric_selftest.json").read_text())
+          if int(summary.get("n_geffs_found", -1)) != int(summary.get("n_datasets_loaded", -2)):
+              raise SystemExit(f"Incomplete GT scan: {summary}")
+          if int(summary.get("n_graph_failures", -1)) != 0:
+              raise SystemExit(f"GT graph failures detected: {summary}")
+          if selftest.get("status") != "passed":
+              raise SystemExit(f"Official metric self-test did not pass: {selftest}")
+          if not selftest.get("edge_identity_ok") or not selftest.get("division_identity_ok"):
+              raise SystemExit(f"Official metric identity checks failed: {selftest}")
+
+          print("Validated current-run Kaggle outputs.")
+          print(json.dumps({
+              "n_datasets_loaded": summary["n_datasets_loaded"],
+              "metric_selftest": selftest,
+          }, indent=2))
+          PY
 
           echo "=== dataset_manifest.csv ==="
           cat kaggle-audit-output/biohub_cv_audit/dataset_manifest.csv
