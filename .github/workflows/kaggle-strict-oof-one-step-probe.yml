@@ -1,0 +1,96 @@
+name: Biohub Strict OOF One Step Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/strict-oof-one-step-trigger]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: biohub-strict-oof-one-step-probe
+  cancel-in-progress: true
+
+jobs:
+  one-step:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Kaggle CLI
+        run: |
+          pip install "kaggle>=2.2.4"
+          kaggle --version
+      - name: Build one-step probe
+        run: |
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_strict_oof_smoke_kernel.py scripts/build_strict_oof_one_step_probe_kernel.py
+          python scripts/build_strict_oof_one_step_probe_kernel.py
+          python -m py_compile .kaggle_strict_oof_one_step_probe_kernel/run_one_step_probe.py
+      - name: Verify access
+        run: |
+          test -n "$KAGGLE_API_TOKEN"
+          kaggle competitions files biohub-cell-tracking-during-development >/dev/null
+      - name: Push kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          kaggle kernels push -p .kaggle_strict_oof_one_step_probe_kernel -t 120 2>&1 | tee "$log"
+          url="$(grep -Eo 'https://www\.kaggle\.com/code/[^[:space:]]+' "$log" | tail -1 || true)"
+          test -n "$url"
+          ref="$(printf '%s' "$url" | sed -E 's#https://www\.kaggle\.com/code/([^/]+/[^/?[:space:]]+).*#\1#')"
+          echo "KERNEL_REF=$ref" >> "$GITHUB_ENV"
+      - name: Wait
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal=""
+          for i in $(seq 1 300); do
+            s="$(kaggle kernels status "$KERNEL_REF" 2>&1 || true)"
+            echo "$s"
+            if echo "$s" | grep -Eqi 'complete|success'; then terminal=success; break; fi
+            if echo "$s" | grep -Eqi 'error|fail|cancel'; then terminal=failure; break; fi
+            sleep 10
+          done
+          [ -n "$terminal" ] || terminal=timeout
+          echo "KAGGLE_TERMINAL=$terminal" >> "$GITHUB_ENV"
+      - name: Download and validate
+        shell: bash
+        run: |
+          set -u
+          rm -rf kaggle-one-step-output
+          mkdir -p kaggle-one-step-output
+          rc=0
+          kaggle kernels output "$KERNEL_REF" -p kaggle-one-step-output -o || rc=$?
+          find kaggle-one-step-output -maxdepth 3 -type f -print || true
+          root=kaggle-one-step-output/biohub_strict_oof_one_step_probe
+          for f in stage_00_started stage_01_paths stage_02_support stage_03_before_dependencies stage_04_dependencies_ok stage_05_imports_ok stage_06_cuda_ready stage_07_split_ready stage_08_before_train stage_09_train_returned one_step_probe_summary fatal_error; do
+            [ ! -f "$root/$f.json" ] || { echo "=== $f ==="; cat "$root/$f.json"; }
+          done
+          [ "$KAGGLE_TERMINAL" = success ] || exit 1
+          [ "$rc" -eq 0 ] || exit "$rc"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('kaggle-one-step-output/biohub_strict_oof_one_step_probe')
+          if (root/'fatal_error.json').exists(): raise SystemExit('fatal_error.json present')
+          s=json.loads((root/'one_step_probe_summary.json').read_text())
+          assert s['status']=='passed'
+          assert s['max_iters']==1 and s['num_workers']==0
+          assert not s['overlap']
+          print(json.dumps(s,indent=2))
+          PY
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: biohub-strict-oof-one-step-${{ github.run_id }}
+          path: kaggle-one-step-output/
+          retention-days: 30
