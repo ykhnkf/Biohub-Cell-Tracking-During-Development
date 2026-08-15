@@ -23,6 +23,12 @@ def build_worker() -> str:
         'OUT = Path("/kaggle/working/biohub_strict_oof_one_step_probe")',
         1,
     )
+    support_fallback = '''    root = Path("/kaggle/input")\n    if root.exists():\n        for manifest in root.rglob("ARTIFACT_MANIFEST.json"):\n            if "biohub-tracking-support-pack-50ep-v1" in str(manifest):\n                return manifest.parent\n    raise FileNotFoundError("Attached biohub-tracking-support-pack-50ep-v1 was not found")\n'''
+    direct_failure = '''    raise FileNotFoundError("Attached biohub-tracking-support-pack-50ep-v1 was not found at known direct paths")\n'''
+    if support_fallback not in prefix:
+        raise RuntimeError("Expected recursive support fallback not found in worker prefix")
+    prefix = prefix.replace(support_fallback, direct_failure, 1)
+
     train_names = repr(PROBE_TRAIN)
     val_names = repr(PROBE_VAL)
     run = r'''def run() -> None:
