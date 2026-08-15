@@ -38,8 +38,8 @@ jobs:
           python scripts/build_strict_oof_smoke_kernel_v4.py
           python -m py_compile .kaggle_strict_oof_smoke_kernel/run_strict_oof_smoke.py
           worker=.kaggle_strict_oof_smoke_kernel/run_strict_oof_smoke.py
-          if grep -q 'input_root.rglob' "$worker"; then
-            echo '::error::Recursive /kaggle/input scan is still present'
+          if grep -q 'rglob(' "$worker"; then
+            echo '::error::Strict OOF v4 still contains a recursive scan'
             exit 1
           fi
           for marker in \
@@ -57,7 +57,7 @@ jobs:
           grep -q 'num_workers=0' "$probe"
           grep -q 'stage_09_train_returned' "$probe"
           if grep -q 'rglob(' "$probe"; then
-            echo '::error::One-step probe contains recursive input scan'
+            echo '::error::One-step probe contains a recursive scan'
             exit 1
           fi
           echo 'Strict OOF v4 + one-step probe static checks passed.'
