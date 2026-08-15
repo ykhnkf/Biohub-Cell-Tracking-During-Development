@@ -35,7 +35,12 @@ def build_worker() -> str:
     target_path = TRAIN / f"{target_row['dataset']}.geff"
     pred = load_graph(td, target_path)
     gt = load_graph(td, target_path)
-    er = evaluate(pred, gt, scale=(target_row["scale_z"], target_row["scale_y"], target_row["scale_x"]), max_distance=7.0)
+    er = evaluate(
+        pred,
+        gt,
+        scale=(target_row["scale_z"], target_row["scale_y"], target_row["scale_x"]),
+        max_distance=7.0,
+    )
     recall = node_recall(pred, gt)
     sample_metrics = per_sample_metrics(
         er,
@@ -83,7 +88,13 @@ def build_worker() -> str:
         )
 
 '''
-    return worker[:start] + targeted_selftest + worker[end:]
+    worker = worker[:start] + targeted_selftest + worker[end:]
+    worker = worker.replace(
+        '"metric_selftest": "import_only_phase0",',
+        '"metric_selftest": metric_selftest["status"],',
+        1,
+    )
+    return worker
 
 
 def main() -> None:
