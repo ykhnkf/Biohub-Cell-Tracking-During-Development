@@ -21,6 +21,12 @@ def build_worker() -> str:
         raise RuntimeError("Expected recursive input scan block not found")
     worker = worker.replace(recursive_block, "", 1)
 
+    support_fallback = '''    root = Path("/kaggle/input")\n    if root.exists():\n        for manifest in root.rglob("ARTIFACT_MANIFEST.json"):\n            if "biohub-tracking-support-pack-50ep-v1" in str(manifest):\n                return manifest.parent\n    raise FileNotFoundError("Attached biohub-tracking-support-pack-50ep-v1 was not found")\n'''
+    direct_failure = '''    raise FileNotFoundError("Attached biohub-tracking-support-pack-50ep-v1 was not found at known direct paths")\n'''
+    if support_fallback not in worker:
+        raise RuntimeError("Expected recursive support fallback not found")
+    worker = worker.replace(support_fallback, direct_failure, 1)
+
     enter = '''    global TRAIN\n\n    # Resolve the competition train root at runtime.'''
     enter_repl = '''    global TRAIN\n    (OUT / "stage_00_enter_run.json").write_text(json.dumps({"status":"entered_run"}, indent=2), encoding="utf-8")\n\n    # Resolve the competition train root at runtime.'''
     if enter not in worker:
