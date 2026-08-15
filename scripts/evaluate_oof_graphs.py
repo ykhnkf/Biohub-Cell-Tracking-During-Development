@@ -1,20 +1,18 @@
 #!/usr/bin/env python
 """Evaluate OOF Biohub graphs with official score plus detection/linking diagnostics.
 
-This script is intended to run inside an environment where the official
-`tracking_cellmot` package is installed (we pin/vendor that package in Kaggle
-CV kernels).  It evaluates every dataset present in both `--pred-dir` and
-`--gt-dir`.
+This script targets the current support-pack baseline API (`biohub_tracking`).
+It evaluates every dataset present in both `--pred-dir` and `--gt-dir`.
 
 Key decomposition:
 
     edge_endpoint_coverage = recoverable_gt_edges / gt_edges
     conditional_link_recall = edge_tp / recoverable_gt_edges
 
-A GT edge is "recoverable" when both of its GT endpoints are matched to at
-least one predicted node under the official 7 um node matching.  This makes
-missing-node errors attributable to detection and residual misses attributable
-to linking.
+A GT edge is "recoverable" when both of its GT endpoints are matched to a
+predicted node under the official 7 um node matching. This separates losses
+caused by missing endpoints (detection/localisation) from losses that remain
+when both endpoints are available (association/linking).
 """
 
 from __future__ import annotations
@@ -29,8 +27,8 @@ from statistics import median
 import tracksdata as td
 from geff import GeffMetadata
 
-from tracking_cellmot.io import DEFAULT_SCALE, open_dataset
-from tracking_cellmot.metrics import evaluate, node_recall, per_sample_metrics, summarise
+from biohub_tracking.io import DEFAULT_SCALE, open_dataset
+from biohub_tracking.metrics import evaluate, node_recall, per_sample_metrics, summarise
 
 
 def load_graph(path: Path):
@@ -55,21 +53,17 @@ def read_estimated_total(path: Path) -> float:
 
 
 def localization_distances_um(pred_graph, gt_graph, scale: tuple[float, float, float]) -> list[float]:
-    """Distances for unique matched GT nodes after official matching."""
+    """Distances for uniquely matched GT nodes after official matching."""
     k = td.DEFAULT_ATTR_KEYS
     pred = pred_graph.node_attrs(attr_keys=[k.NODE_ID, k.MATCHED_NODE_ID, k.Z, k.Y, k.X])
     gt = gt_graph.node_attrs(attr_keys=[k.NODE_ID, k.Z, k.Y, k.X])
-
-    # Keep only actual matches.  When more than one prediction maps to a GT node,
-    # keep the closest prediction for localization diagnostics.
-    pred_rows = pred.to_dicts()
     gt_pos = {
         int(r[k.NODE_ID]): (float(r[k.Z]), float(r[k.Y]), float(r[k.X]))
         for r in gt.to_dicts()
     }
     best: dict[int, float] = {}
     sz, sy, sx = scale
-    for r in pred_rows:
+    for r in pred.to_dicts():
         gid = int(r[k.MATCHED_NODE_ID])
         if gid < 0 or gid not in gt_pos:
             continue
@@ -86,22 +80,20 @@ def localization_distances_um(pred_graph, gt_graph, scale: tuple[float, float, f
 def matched_gt_node_ids(pred_graph) -> set[int]:
     k = td.DEFAULT_ATTR_KEYS
     attrs = pred_graph.node_attrs(attr_keys=[k.MATCHED_NODE_ID])
-    out: set[int] = set()
-    for r in attrs.to_dicts():
-        gid = int(r[k.MATCHED_NODE_ID])
-        if gid >= 0:
-            out.add(gid)
-    return out
+    return {
+        int(r[k.MATCHED_NODE_ID])
+        for r in attrs.to_dicts()
+        if int(r[k.MATCHED_NODE_ID]) >= 0
+    }
 
 
 def recoverable_gt_edges(gt_graph, matched_gt: set[int]) -> int:
     k = td.DEFAULT_ATTR_KEYS
     attrs = gt_graph.edge_attrs(attr_keys=[k.EDGE_SOURCE, k.EDGE_TARGET])
-    n = 0
-    for r in attrs.to_dicts():
-        if int(r[k.EDGE_SOURCE]) in matched_gt and int(r[k.EDGE_TARGET]) in matched_gt:
-            n += 1
-    return n
+    return sum(
+        int(r[k.EDGE_SOURCE]) in matched_gt and int(r[k.EDGE_TARGET]) in matched_gt
+        for r in attrs.to_dicts()
+    )
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -143,9 +135,9 @@ def main() -> None:
         scale = read_scale(args.gt_dir, name)
         n_total = read_estimated_total(args.gt_dir / f"{name}.geff")
 
-        # Official evaluate() performs the node matching in-place on `pred`.
+        # Official evaluate() performs node matching in-place on pred.
         er = evaluate(pred, gt, scale=scale, max_distance=args.max_distance)
-        rec = node_recall(pred, gt) if pred.num_nodes() and pred.num_edges() else 0.0
+        rec = node_recall(pred, gt) if pred.num_nodes() and gt.num_nodes() else 0.0
         pm = per_sample_metrics(er, n_total, rec)
         official_rows.append(pm)
 
@@ -159,7 +151,11 @@ def main() -> None:
 
         dists = localization_distances_um(pred, gt, scale)
         pred_nodes = int(er.num_pred_nodes)
-        node_ratio = pred_nodes / n_total if n_total and not math.isnan(n_total) else float("nan")
+        node_ratio = (
+            pred_nodes / n_total
+            if n_total > 0 and not math.isnan(n_total)
+            else float("nan")
+        )
 
         row = {
             "dataset": name,
@@ -203,10 +199,17 @@ def main() -> None:
 
     summary = {
         "n_datasets": len(rows),
-        "official": {k: (float(v) if hasattr(v, "__float__") else v) for k, v in official_summary.items()},
+        "official": {
+            k: (float(v) if hasattr(v, "__float__") else v)
+            for k, v in official_summary.items()
+        },
         "diagnostics": {
-            "edge_endpoint_coverage_micro": total_recoverable / total_gt_edges if total_gt_edges else float("nan"),
-            "conditional_link_recall_micro": total_tp / total_recoverable if total_recoverable else float("nan"),
+            "edge_endpoint_coverage_micro": (
+                total_recoverable / total_gt_edges if total_gt_edges else float("nan")
+            ),
+            "conditional_link_recall_micro": (
+                total_tp / total_recoverable if total_recoverable else float("nan")
+            ),
             "gt_edges": total_gt_edges,
             "recoverable_gt_edges": total_recoverable,
             "missing_node_gt_edges": total_missing_node,
@@ -214,7 +217,9 @@ def main() -> None:
             "edge_fp": sum(r["edge_fp"] for r in rows),
         },
     }
-    (args.out_dir / "cv_summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    (args.out_dir / "cv_summary.json").write_text(
+        json.dumps(summary, indent=2, default=str), encoding="utf-8"
+    )
     print(json.dumps(summary, indent=2, default=str))
 
 
