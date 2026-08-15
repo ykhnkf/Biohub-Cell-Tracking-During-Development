@@ -1,0 +1,169 @@
+name: Biohub Kaggle OOF Pilot
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/oof-pilot-trigger
+
+permissions:
+  contents: read
+
+concurrency:
+  group: biohub-kaggle-oof-pilot
+  cancel-in-progress: false
+
+jobs:
+  oof-pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KERNEL_REF: ykhnkf/biohub-cell-tracking-oof-pilot
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Kaggle CLI
+        run: |
+          python -m pip install --upgrade pip
+          pip install "kaggle>=2.2.4"
+          kaggle --version
+
+      - name: Build and compile private Kaggle OOF pilot kernel
+        run: |
+          rm -rf .kaggle_oof_pilot_kernel
+          python -m py_compile scripts/build_cv_audit_kernel_v3.py scripts/build_cv_audit_kernel_v4.py scripts/build_cv_audit_kernel_v5.py scripts/build_cv_audit_kernel_v6.py scripts/build_cv_audit_kernel_v7.py scripts/build_oof_pilot_kernel.py
+          python scripts/build_oof_pilot_kernel.py
+          python -m py_compile .kaggle_oof_pilot_kernel/run_oof_pilot.py
+          cat .kaggle_oof_pilot_kernel/kernel-metadata.json
+
+      - name: Verify Kaggle auth and competition access
+        run: |
+          test -n "$KAGGLE_API_TOKEN" || (echo "KAGGLE_API_TOKEN repository secret is missing" && exit 1)
+          kaggle competitions files biohub-cell-tracking-during-development >/dev/null
+
+      - name: Push OOF pilot kernel to Kaggle
+        run: kaggle kernels push -p .kaggle_oof_pilot_kernel -t 180
+
+      - name: Wait for Kaggle OOF pilot terminal state
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal=""
+          last_status=""
+          for i in $(seq 1 270); do
+            echo "Poll $i"
+            last_status="$(kaggle kernels status "$KERNEL_REF" 2>&1 || true)"
+            echo "$last_status"
+            if echo "$last_status" | grep -Eqi 'complete|success'; then
+              terminal="success"
+              break
+            fi
+            if echo "$last_status" | grep -Eqi 'error|fail|cancel'; then
+              terminal="failure"
+              break
+            fi
+            sleep 20
+          done
+          if [ -z "$terminal" ]; then
+            terminal="timeout"
+          fi
+          echo "KAGGLE_TERMINAL=$terminal" >> "$GITHUB_ENV"
+          echo "Kaggle terminal state: $terminal"
+
+      - name: Download and validate OOF pilot outputs
+        shell: bash
+        run: |
+          set -u
+          rm -rf kaggle-oof-pilot-output
+          mkdir -p kaggle-oof-pilot-output
+
+          output_rc=0
+          kaggle kernels output "$KERNEL_REF" -p kaggle-oof-pilot-output -o || output_rc=$?
+          find kaggle-oof-pilot-output -maxdepth 5 -type f -print || true
+
+          log_file="$(find kaggle-oof-pilot-output -maxdepth 2 -name '*.log' -type f | head -1 || true)"
+          if [ -n "$log_file" ]; then
+            echo "=== Kaggle kernel log tail ==="
+            tail -n 300 "$log_file"
+          fi
+
+          for diagnostic in run_token progress support_inventory pilot_plan fatal_error cv_summary; do
+            file="kaggle-oof-pilot-output/biohub_oof_pilot/${diagnostic}.json"
+            if [ -f "$file" ]; then
+              echo "=== ${diagnostic}.json ==="
+              cat "$file"
+            fi
+          done
+
+          if [ "$KAGGLE_TERMINAL" != "success" ]; then
+            echo "::error::Kaggle kernel ended with terminal state '$KAGGLE_TERMINAL'."
+            exit 1
+          fi
+          if [ "$output_rc" -ne 0 ]; then
+            echo "::error::kaggle kernels output failed with exit code $output_rc."
+            exit "$output_rc"
+          fi
+
+          python - <<'PY'
+          import json
+          import math
+          import os
+          from pathlib import Path
+
+          root = Path("kaggle-oof-pilot-output/biohub_oof_pilot")
+          required = [
+              root / "run_token.json",
+              root / "support_inventory.json",
+              root / "pilot_plan.json",
+              root / "prediction_manifest.csv",
+              root / "cv_per_dataset.csv",
+              root / "cv_summary.json",
+          ]
+          missing = [str(p) for p in required if not p.is_file()]
+          if missing:
+              raise SystemExit("Missing required OOF pilot outputs: " + ", ".join(missing))
+          if (root / "fatal_error.json").exists():
+              raise SystemExit("OOF pilot emitted fatal_error.json")
+
+          token = json.loads((root / "run_token.json").read_text())
+          expected_run = os.environ["GITHUB_RUN_ID"]
+          if str(token.get("github_run_id")) != expected_run:
+              raise SystemExit(
+                  f"Stale Kaggle output: run token {token.get('github_run_id')!r} != current GitHub run {expected_run!r}"
+              )
+
+          summary = json.loads((root / "cv_summary.json").read_text())
+          if summary.get("status") != "passed":
+              raise SystemExit(f"OOF pilot summary not passed: {summary}")
+          if int(summary.get("n_datasets", 0)) < 1 or int(summary.get("n_folds", 0)) < 1:
+              raise SystemExit(f"OOF pilot evaluated no data: {summary}")
+          score = float(summary.get("official", {}).get("score", float("nan")))
+          if not math.isfinite(score):
+              raise SystemExit(f"OOF pilot official score is not finite: {summary}")
+
+          print("Validated current-run OOF pilot outputs.")
+          print(json.dumps(summary, indent=2))
+          PY
+
+          echo "=== cv_per_dataset.csv ==="
+          cat kaggle-oof-pilot-output/biohub_oof_pilot/cv_per_dataset.csv
+
+      - name: Upload OOF pilot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: biohub-oof-pilot-${{ github.run_id }}
+          path: kaggle-oof-pilot-output/
+          if-no-files-found: warn
+          retention-days: 30
