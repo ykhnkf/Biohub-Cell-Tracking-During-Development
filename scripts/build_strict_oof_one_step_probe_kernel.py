@@ -75,12 +75,13 @@ def build_worker() -> str:
         raise RuntimeError("CUDA unavailable")
 
     device = torch.device("cuda:0")
+    cuda_index = 0
     torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.reset_peak_memory_stats(cuda_index)
     gpu_before = {
-        "name":torch.cuda.get_device_name(0),
-        "allocated":int(torch.cuda.memory_allocated(device)),
-        "reserved":int(torch.cuda.memory_reserved(device)),
+        "name":torch.cuda.get_device_name(cuda_index),
+        "allocated":int(torch.cuda.memory_allocated(cuda_index)),
+        "reserved":int(torch.cuda.memory_reserved(cuda_index)),
     }
     (OUT / "stage_06_cuda_ready.json").write_text(json.dumps(gpu_before, indent=2), encoding="utf-8")
 
@@ -119,8 +120,8 @@ def build_worker() -> str:
         data_parallel=False,
     )
     elapsed = time.time() - t0
-    peak = int(torch.cuda.max_memory_allocated(device))
-    reserved_peak = int(torch.cuda.max_memory_reserved(device))
+    peak = int(torch.cuda.max_memory_allocated(cuda_index))
+    reserved_peak = int(torch.cuda.max_memory_reserved(cuda_index))
     (OUT / "stage_09_train_returned.json").write_text(json.dumps({
         "seconds":elapsed,"peak_memory_allocated":peak,"peak_memory_reserved":reserved_peak
     }, indent=2), encoding="utf-8")
